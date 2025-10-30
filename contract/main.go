@@ -1,34 +1,192 @@
-// Proof of Concept VSC Smart Contract in Golang
-//
-// Build command: tinygo build -o main.wasm -gc=custom -scheduler=none -panic=trap -no-debug -target=wasm-unknown main.go
-// Inspect Output: wasmer inspect main.wasm
-// Run command (only works w/o SDK imports): wasmedge run main.wasm entrypoint 0
-//
-// Caveats:
-// - Go routines, channels, and defer are disabled
-// - panic() always halts the program, since you can't recover in a deferred function call
-// - must import sdk or build fails
-// - to mark a function as a valid entrypoint, it must be manually exported (//go:wasmexport <entrypoint-name>)
-//
-// TODO:
-// - when panic()ing, call `env.abort()` instead of executing the unreachable WASM instruction
-// - Remove _initalize() export & double check not necessary
-
 package main
 
 import (
-	_ "contract-template/sdk" // ensure sdk is imported
+	"encoding/json"
+	"fmt"
+	"strconv"
+	"strings"
+	_ "vsc-function-calls/sdk" // ensure sdk is imported
 
-	"contract-template/sdk"
+	"vsc-function-calls/sdk"
 )
 
 func main() {
 
 }
 
-//go:wasmexport entrypoint
-func Entrypoint(a *string) *string {
+//go:wasmexport log
+func LogSometing(a *string) *string {
 	sdk.Log(*a)
-	// panic("test")
 	return a
+}
+
+// payload: keyname|value
+//
+//go:wasmexport state_set
+func StateSet(payload *string) *string {
+	in := *payload
+	key := nextField(&in)
+	value := nextField(&in)
+	require(in == "", "too many arguments")
+	sdk.StateSetObject(key, value)
+	return &key
+}
+
+//go:wasmexport state_get
+func StateGet(key *string) *string {
+	value := sdk.StateGetObject(*key)
+	return value
+}
+
+//go:wasmexport state_del
+func StateDelete(key *string) *string {
+	sdk.StateDeleteObject(*key)
+	return nil
+}
+
+//go:wasmexport get_env
+func GetEnv(_ *string) *string {
+	envs := sdk.GetEnv()
+	// Marshal to JSON
+	jsonBytes, err := json.Marshal(envs)
+	if err != nil {
+		sdk.Abort("failed to convert env to json")
+	}
+
+	// Convert to string
+	jsonString := string(jsonBytes)
+	return &jsonString
+}
+
+//go:wasmexport get_env_string
+func GetEnvString(_ *string) *string {
+	envs := sdk.GetEnvStr()
+	return &envs
+}
+
+//go:wasmexport get_envkey
+func GetEnvKey(a *string) *string {
+	envVal := sdk.GetEnvKey(*a)
+	return envVal
+}
+
+//go:wasmexport get_balance
+func GetBalance(a *string) *string {
+	bal := sdk.GetBalance(sdk.Address(*a), sdk.AssetHive) // result in terms of mHIVE/mHBD
+	balStr := strconv.FormatUint(uint64(bal), 10)
+	return &balStr
+}
+
+//go:wasmexport hive_draw
+func HiveDraw(_ *string) *string {
+	sdk.HiveDraw(1, sdk.AssetHive) // Draw 0.001 HIVE from caller
+	return nil
+}
+
+//go:wasmexport hive_transfer
+func HiveTransfer(receiver *string) *string {
+	sdk.HiveTransfer(sdk.Address(*receiver), 1, sdk.AssetHive) // Transfer 0.001 HIVE from contract
+	return nil
+}
+
+//go:wasmexport hive_withdraw
+func HiveWithdraw(receiver *string) *string {
+	sdk.HiveWithdraw(sdk.Address(*receiver), 1, sdk.AssetHive) // Withdraw 0.001 HIVE from contract
+	return nil
+}
+
+// payload: contractId|key
+//
+//go:wasmexport contract_read
+func ContractStateGet(payload *string) *string {
+	in := *payload
+	contractId := nextField(&in)
+	key := nextField(&in)
+	require(in == "", "too many arguments")
+	return sdk.ContractStateGet(contractId, key)
+}
+
+// payload: contractId|method|payload
+// intent is executed to contract and then "copied" to other contract call
+
+//go:wasmexport contract_call
+func ContractCall(payload *string) *string {
+	in := *payload
+	contractId := nextField(&in)
+	method := nextField(&in)
+	callPayload := in // all the rest is the payload
+	callOptions := &sdk.ContractCallOptions{
+		Intents: nil,
+	}
+	if ta := GetFirstTransferAllow(sdk.GetEnv().Intents); ta != nil {
+		amt := uint64(ta.Limit * 1000)
+		sdk.HiveDraw(int64(amt), ta.Token)
+		callOptions.Intents = []sdk.Intent{{
+			Type: "transfer.allow",
+			Args: map[string]string{
+				"token": ta.Token.String(),
+				"limit": fmt.Sprintf("%.3f", ta.Limit),
+			},
+		}}
+	}
+
+	// Call another contract with same allowance as initial tx intent
+	ret := sdk.ContractCall(contractId, method, callPayload, callOptions)
+	return ret
+}
+
+// -- helpers --
+func require(cond bool, msg string) {
+	if !cond {
+		sdk.Abort(msg)
+	}
+}
+
+func nextField(s *string) string {
+	i := strings.IndexByte(*s, '|')
+	if i < 0 {
+		f := *s
+		*s = ""
+		return f
+	}
+	f := (*s)[:i]
+	*s = (*s)[i+1:]
+	return f
+}
+
+type TransferAllow struct {
+	Limit float64
+	Token sdk.Asset
+}
+
+var validAssets = []string{sdk.AssetHbd.String(), sdk.AssetHive.String()}
+
+func isValidAsset(token string) bool {
+	for _, a := range validAssets {
+		if token == a {
+			return true
+		}
+	}
+	return false
+}
+
+func GetFirstTransferAllow(intents []sdk.Intent) *TransferAllow {
+	for _, intent := range intents {
+		if intent.Type == "transfer.allow" {
+			token := intent.Args["token"]
+			if !isValidAsset(token) {
+				sdk.Abort("invalid intent token")
+			}
+			limitStr := intent.Args["limit"]
+			limit, err := strconv.ParseFloat(limitStr, 64)
+			if err != nil {
+				sdk.Abort("invalid intent limit")
+			}
+			return &TransferAllow{
+				Limit: limit,
+				Token: sdk.Asset(token),
+			}
+		}
+	}
+	return nil
 }
