@@ -14,7 +14,7 @@ func main() {
 
 }
 
-//go:wasmexport log
+//go:wasmexport c_log
 func LogSometing(a *string) *string {
 	sdk.Log(*a)
 	return a
@@ -22,8 +22,8 @@ func LogSometing(a *string) *string {
 
 // payload: keyname|value
 //
-//go:wasmexport state_set
-func StateSet(payload *string) *string {
+//go:wasmexport c_state_set
+func MyStateSet(payload *string) *string {
 	in := *payload
 	key := nextField(&in)
 	value := nextField(&in)
@@ -32,20 +32,20 @@ func StateSet(payload *string) *string {
 	return &key
 }
 
-//go:wasmexport state_get
-func StateGet(key *string) *string {
+//go:wasmexport c_state_get
+func MyStateGet(key *string) *string {
 	value := sdk.StateGetObject(*key)
 	return value
 }
 
-//go:wasmexport state_del
-func StateDelete(key *string) *string {
+//go:wasmexport c_state_del
+func MyStateDelete(key *string) *string {
 	sdk.StateDeleteObject(*key)
 	return nil
 }
 
-//go:wasmexport get_env
-func GetEnv(_ *string) *string {
+//go:wasmexport c_get_env
+func MyGetEnv(_ *string) *string {
 	envs := sdk.GetEnv()
 	// Marshal to JSON
 	jsonBytes, err := json.Marshal(envs)
@@ -58,47 +58,47 @@ func GetEnv(_ *string) *string {
 	return &jsonString
 }
 
-//go:wasmexport get_env_string
-func GetEnvString(_ *string) *string {
+//go:wasmexport c_get_env_string
+func MyGetEnvString(_ *string) *string {
 	envs := sdk.GetEnvStr()
 	return &envs
 }
 
-//go:wasmexport get_envkey
-func GetEnvKey(a *string) *string {
+//go:wasmexport c_get_envkey
+func MyGetEnvKey(a *string) *string {
 	envVal := sdk.GetEnvKey(*a)
 	return envVal
 }
 
-//go:wasmexport get_balance
-func GetBalance(a *string) *string {
+//go:wasmexport c_get_balance
+func MyGetBalance(a *string) *string {
 	bal := sdk.GetBalance(sdk.Address(*a), sdk.AssetHive) // result in terms of mHIVE/mHBD
 	balStr := strconv.FormatUint(uint64(bal), 10)
 	return &balStr
 }
 
-//go:wasmexport hive_draw
-func HiveDraw(_ *string) *string {
+//go:wasmexport c_hive_draw
+func MyHiveDraw(_ *string) *string {
 	sdk.HiveDraw(1, sdk.AssetHive) // Draw 0.001 HIVE from caller
 	return nil
 }
 
-//go:wasmexport hive_transfer
-func HiveTransfer(receiver *string) *string {
+//go:wasmexport c_hive_transfer
+func MyHiveTransfer(receiver *string) *string {
 	sdk.HiveTransfer(sdk.Address(*receiver), 1, sdk.AssetHive) // Transfer 0.001 HIVE from contract
 	return nil
 }
 
-//go:wasmexport hive_withdraw
-func HiveWithdraw(receiver *string) *string {
+//go:wasmexport c_hive_withdraw
+func MyHiveWithdraw(receiver *string) *string {
 	sdk.HiveWithdraw(sdk.Address(*receiver), 1, sdk.AssetHive) // Withdraw 0.001 HIVE from contract
 	return nil
 }
 
 // payload: contractId|key
 //
-//go:wasmexport contract_read
-func ContractStateGet(payload *string) *string {
+//go:wasmexport c_contract_read
+func MyContractStateGet(payload *string) *string {
 	in := *payload
 	contractId := nextField(&in)
 	key := nextField(&in)
@@ -109,8 +109,8 @@ func ContractStateGet(payload *string) *string {
 // payload: contractId|method|payload
 // intent is executed to contract and then "copied" to other contract call
 
-//go:wasmexport contract_call
-func ContractCall(payload *string) *string {
+//go:wasmexport c_contract_call
+func MyContractCall(payload *string) *string {
 	in := *payload
 	contractId := nextField(&in)
 	method := nextField(&in)

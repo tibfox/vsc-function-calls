@@ -3,3 +3,6 @@ main.wasm
 .env
 data/
 artifacts/
+.cache/
+.vscode/
+go/
